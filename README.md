@@ -1,7 +1,7 @@
 # Metalcore-Lyrical-Analysis
 Text analysis of all Metalcore song lyrics released in 2019. Not a perfect analysis, but another example of coding for basic text analyses. This project was not designed to be extremely rigorous. I could have editted the data a bit more thoroughly, but I am not trying to gain deep understanding from these lyrics. 
 
-[![Freq](https://imgur.com/77dH3I6)]()
+[Freq](https://imgur.com/77dH3I6)]
 
 [![Freq](https://imgur.com/9ph0ok8)]()
 
