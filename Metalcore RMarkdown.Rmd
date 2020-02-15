@@ -1,0 +1,230 @@
+---
+title: "Metalcore RMarkdown"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r, load packages, include = FALSE}
+library(readODS)
+library(dplyr)
+library(tidytext)
+library(tidyr)
+library(stringr)
+library(scales)
+library(ggplot2)
+library(igraph)
+library(ggraph)
+library(wordcloud)
+library(wesanderson)
+library(widyr)
+library(textdata)
+library(interactions)
+library(ggthemes)
+library(readr)
+library(rmarkdown)
+library(knitr)
+library(magrittr)
+
+```
+
+
+```{r, load data, include=FALSE}
+metalcore <- read_ods(path="C:/Users/goodb/Desktop/Metalcore Project.ods", col_names=TRUE)
+
+```
+
+```{r, echo=FALSE}
+metalcore %>% count(Artist, sort=TRUE)
+metalcore %>% count(Song_Lyrics, sort=TRUE)
+
+```
+
+```{r, include=FALSE, message=FALSE}
+clean <- metalcore %>% unnest_tokens(word, Song_Lyrics) %>% mutate(linenumber = row_number())
+clean <- clean %>% anti_join(stop_words)
+
+```
+
+```{r, echo=FALSE, message=FALSE}
+clean %>% count(word, sort=TRUE)
+```
+
+```{r, echo=FALSE}
+clean %>% count(word, sort=TRUE) %>% top_n(15) %>% filter(!str_detect(word, "\\d")) %>% mutate(word = reorder(word, n)) %>% ggplot(aes(word, n)) + geom_col() + xlab(NULL) + coord_flip() + labs(title="Top 15 Words That Appear in Metalcore Songs", subtitle="2019 Releases") + ylab("Total Appearance of Word") + theme_bw() 
+
+```
+
+```{r, echo=FALSE, error=FALSE, warning=FALSE, fig.width=10, fig.height=10}
+
+clean_totals <- clean %>% count(word, sort=TRUE) %>% filter(!str_detect(word, "\\d"))
+word_cors <- clean %>% group_by(word) %>% filter(n() > 50) %>% filter(!str_detect(word, "\\d")) %>% ungroup %>% pairwise_cor(word, Artist, sort=TRUE)
+filtered_cors <- word_cors %>% filter(correlation > 0.32, item1 %in% clean_totals$word, item2 %in% clean_totals$word) %>% filter(correlation <= 1, item1 %in% clean_totals$word, item2 %in% clean_totals$word)
+vertices <- clean_totals %>% filter(word %in% filtered_cors$item1)
+set.seed(1234)
+filtered_cors %>% graph_from_data_frame(vertices=vertices) %>% ggraph(layout="fr") + geom_edge_link(aes(edge_alpha = correlation), width=2) + geom_node_point(aes(size=n), color="cyan4") + geom_node_text(aes(label=name), repel=TRUE, point.padding = unit(0.3, "lines"), family="RobotoCondensed-Regular") + theme_graph(base_family="RobotoCondensed-Regular") + theme(plot.title=element_text(family="Roboto-Bold")) + scale_size_continuous(range=c(1, 15)) + labs(size="Number of uses", edge_alpha = "Correlation", title = "Word correlations in Metalcore Songs", subtitle="Which words are more likely to occur together than other words")
+
+```
+
+```{r, echo=FALSE}
+plot_words <- metalcore %>% unnest_tokens(word, Song_Lyrics) %>% filter(!str_detect(word, "\\d"))
+word_averages <- plot_words %>% group_by(Artist, Album) %>% mutate(word_position=row_number() / n()) %>% group_by(word) %>% summarize(median_position = median(word_position), number = n())
+word_averages %>% filter(number >= 50) %>% arrange(median_position)
+start_end_words <- word_averages %>% filter(number >= 50) %>% arrange(desc(median_position)) %>% slice(c(1:15, n():(n()-14)))
+start_end_words %>% mutate(word=reorder(word, -median_position), direction = ifelse(median_position < .5, "Beginning", "End")) %>% ggplot(aes(median_position, word, color=direction)) + geom_point(size=5) + geom_errorbarh(aes(xmin=.5, xmax=median_position), height=0) + geom_vline(xintercept = .5, lty=2) + scale_x_continuous(labels = scales::percent_format()) + expand_limits(x=c(0,1)) + labs(x="Median position of word within a song", y="", title="Words most shifted toward the beginning or end of a Metalcore Song", subtitle="Words with at least 50 uses", color="")
+
+
+```
+
+```{r, echo=FALSE, fig.height=8, fig.width=10}
+decile_counts <- plot_words %>% group_by(Artist, Album) %>% mutate(word_position = row_number() / n()) %>% ungroup() %>% mutate(decile = ceiling(word_position * 10) / 10) %>% count(decile, word)
+decile_counts %>% inner_join(start_end_words, by="word") %>% mutate(word=reorder(word, median_position)) %>% ggplot(aes(decile, n/ number)) + geom_line() + facet_wrap(~word) + scale_x_continuous(labels = scales::percent_format()) + scale_y_continuous(labels = scales::percent_format()) + geom_hline(yintercept=.1, color="red", lty=2) + theme(panel.grid.major=element_blank(), panel.grid.minor = element_blank()) + labs(x="Position within a Amicus Curiae", y="Percentage of word's appearances", title="Words within a Metalcore song", subtitle="Words that occurred at least 25 times that were shifted toward the beginning or end of a Metalcore Song")
+
+```
+
+
+```{r, echo=FALSE, fig.height=8, fig.width=14}
+peak_decile <- decile_counts %>% inner_join(word_averages, by = "word") %>% filter(number >= 25) %>% transmute(peak_decile = decile, word, number, fraction_peak=n/number) %>% arrange(desc(fraction_peak)) %>% distinct(word, .keep_all = TRUE)
+peak_decile %>% group_by(percent = reorder(percent(peak_decile), peak_decile)) %>% top_n(8, fraction_peak) %>% ungroup() %>% mutate(word = reorder(word, fraction_peak)) %>% ggplot(aes(word, fraction_peak, fill=peak_decile)) + geom_col(show.legend=FALSE) + geom_hline(yintercept = .1, color="red", lty = 2) + coord_flip() + facet_wrap(~percent, nrow=2, scales="free_y") + scale_y_continuous(labels=percent_format()) + theme(panel.grid.major = element_blank()) + labs(x = "", y = "Percentatge of word's appearances that occur in this decile", title="Words that characterize each part of a Metalcore song", subtitle="The Eight words in each decile that are most over-represented at that part of the song.\nThe vertical dashed line marks 10%, which would represent a word that is equally likely anywhere in a Metalcore song.")
+```
+
+
+```{r, echo=FALSE, fig.height=8, fig.width=10}
+peak_decile %>% filter(peak_decile > .1, peak_decile < 1) %>% group_by(peak_decile) %>% top_n(3, fraction_peak) %>% ungroup() %>% inner_join(decile_counts, by = "word") %>% mutate(word=reorder(word, peak_decile + 0.001 * fraction_peak)) %>% ggplot(aes(decile, n / number, color=word)) + geom_line(show.legend=FALSE, size=1) + geom_hline(lty = 2, yintercept = .1, alpha=.5) + facet_wrap(~word, ncol=6) + scale_x_continuous(labels=percent_format()) + scale_y_continuous(labels=percent_format()) + expand_limits(y=0) + theme(panel.grid.minor=element_blank(), panel.grid.major = element_blank()) + labs(x="Position within a song", y="Percentage of word's appearances", title="Words used at particular points of an Metalcore Song", subtitle="Includes words that appeared at 25 times, showing three most overrepresented at each decile.\nThe horizontal dashed line marks 10%, which would represent a word that is equally likely anywhere in a song.")
+```
+
+```{r, echo=FALSE}
+decile_counts %>% inner_join(get_sentiments("afinn"), by = "word") %>% group_by(decile) %>% summarize(score = sum(value * n) / sum(n)) %>% ggplot(aes(decile, score)) + geom_line(size=1) + scale_x_continuous(labels=percent_format()) + expand_limits(y=0) + labs(x="Position within a Metalcore song", y="Average AFINN Sentiment Score", title="Visualizing Sentiment Across All Metalcore Songs") + theme_dark()
+```
+
+
+```{r, echo=FALSE}
+afinn <- decile_counts %>% inner_join(get_sentiments("afinn"), by = "word") %>% group_by(decile) %>% summarize(score = sum(value * n) / sum(n))
+
+```
+
+```{r, echo=FALSE}
+
+decile_counts <- clean %>% group_by(Album_Type) %>% mutate(word_position = row_number () / n()) %>% ungroup() %>% mutate(decile=ceiling(word_position * 10)/10) %>% count(decile, word, Album_Type) %>% filter(Album_Type=="Album" | Album_Type=="EP")
+
+decile_counts %>% inner_join(get_sentiments("afinn"), by = "word") %>% group_by(decile, Album_Type) %>% summarize(score = sum(value * n) / sum(n)) %>% ggplot(aes(decile, score, col=Album_Type)) + geom_line(size=2) + scale_x_continuous(labels=percent_format()) + expand_limits(y=0) + labs(x="Position within a Metalcore Song", y="Average AFINN Sentiment Score", title="Visualizing Sentiment Across All Metalcore Songs", subtitle="Comparing Albums to EPs.\nThe dotted black line is the average across all metalcore songs.") + geom_line(data=afinn, aes(decile, score), size=1.5, linetype=2, color="black") + theme_dark()
+```
+
+
+
+Check on mean of bands versus sum 
+```{r, echo=FALSE}
+
+decile_counts <- clean %>% group_by(Artist, Album) %>% mutate(word_position = row_number () / n()) %>% ungroup() %>% mutate(decile=ceiling(word_position * 10)/10) %>% count(decile, word, Artist)
+
+artist_afinn<-decile_counts %>% inner_join(get_sentiments("afinn"), by = "word") %>% group_by(decile, Artist)
+
+artist_sent <- artist_afinn %>% group_by(Artist, word) %>% mutate(overall_sent = n * value) %>% mutate(word_overall= sum(overall_sent)) %>% ungroup() 
+
+band_rank <- artist_sent %>% group_by(Artist)  %>% summarise(sum(word_overall), sum(word_overall)/sum(n), sum(n))
+```
+
+
+Top 3 Negative Versus Top 3 Positive
+```{r, echo=FALSE}
+
+decile_counts <- clean %>% group_by(Artist, Album) %>% mutate(word_position = row_number () / n()) %>% ungroup() %>% mutate(decile=ceiling(word_position * 10)/10) %>% count(decile, word, Artist) %>% filter(Artist=="Attila" | Artist=="inVisions" | Artist=="UNITYTX" | Artist=="Counterparts" | Artist=="Vrsty" | Artist=="Above, Below")
+
+decile_counts %>% inner_join(get_sentiments("afinn"), by = "word") %>% group_by(decile, Artist) %>% summarize(score = sum(value * n) / sum(n)) %>% ggplot(aes(decile, score, col=Artist)) + geom_line(size=2) + scale_x_continuous(labels=percent_format()) + expand_limits(y=0) + labs(x="Position within a Metalcore Song", y="Average AFINN Sentiment Score", title="Visualizing Sentiment Across All Metalcore Songs", subtitle="Top 3 Positive/Negative Bands.\nThe dotted black line is the average across all metalcore songs.") + geom_line(data=afinn, aes(decile, score), size=1.5, linetype=2, color="black") + theme_dark()
+
+
+```
+
+Top European Band
+```{r, echo=FALSE}
+
+decile_counts <- clean %>% group_by(Artist, Album) %>% mutate(word_position = row_number () / n()) %>% ungroup() %>% mutate(decile=ceiling(word_position * 10)/10) %>% count(decile, word, Artist) %>% filter(Artist=="While She Sleeps" | Artist=="Aviana" | Artist=="Imminence" | Artist=="Employed to Serve" | Artist=="Blood Youth")
+
+decile_counts %>% inner_join(get_sentiments("afinn"), by = "word") %>% group_by(decile, Artist) %>% summarize(score = sum(value * n) / sum(n)) %>% ggplot(aes(decile, score, col=Artist)) + geom_line(size=2) + scale_x_continuous(labels=percent_format()) + expand_limits(y=0) + labs(x="Position within a Metalcore Song", y="Average AFINN Sentiment Score", title="Visualizing Sentiment Across All Metalcore Songs: European Releases", subtitle="Artists Nominated as Best European Band 2019.\nThe dotted black line is the average across all metalcore songs.") + geom_line(data=afinn, aes(decile, score), size=1.5, linetype=2, color="black") + theme_dark()
+
+
+```
+
+
+Top Oceania Band
+```{r, echo=FALSE}
+
+decile_counts <- clean %>% group_by(Artist, Album) %>% mutate(word_position = row_number () / n()) %>% ungroup() %>% mutate(decile=ceiling(word_position * 10)/10) %>% count(decile, word, Artist) %>% filter(Artist=="Northlane" | Artist=="Thornhill" | Artist=="Above, Below" | Artist=="Void of Vision" | Artist=="Gravemind")
+
+decile_counts %>% inner_join(get_sentiments("afinn"), by = "word") %>% group_by(decile, Artist) %>% summarize(score = sum(value * n) / sum(n)) %>% ggplot(aes(decile, score, col=Artist)) + geom_line(size=2) + scale_x_continuous(labels=percent_format()) + expand_limits(y=0) + labs(x="Position within a Metalcore Song", y="Average AFINN Sentiment Score", title="Visualizing Sentiment Across All Metalcore Songs: Oceania Releases", subtitle="Top Bands That Play Upside Down.\nThe dotted black line is the average across all metalcore songs.") + geom_line(data=afinn, aes(decile, score), size=1.5, linetype=2, color="black") + theme_dark()
+
+
+```
+
+
+Top Album of the Year
+```{r, echo=FALSE}
+
+decile_counts <- clean %>% group_by(Artist, Album) %>% mutate(word_position = row_number () / n()) %>% ungroup() %>% mutate(decile=ceiling(word_position * 10)/10) %>% count(decile, word, Artist) %>% filter(Artist=="Crystal Lake" | Artist=="Northlane" | Artist=="Dayseeker" | Artist=="Counterparts" | Artist=="Thornhill" | Artist=="Knocked Loose" | Artist=="Periphery" | Artist=="The Devil Wears Prada" | Artist=="Norma Jean" | Artist=="As I Lay Dying")
+
+decile_counts %>% inner_join(get_sentiments("afinn"), by = "word") %>% group_by(decile, Artist) %>% summarize(score = sum(value * n) / sum(n)) %>% ggplot(aes(decile, score, col=Artist)) + geom_line(size=2) + scale_x_continuous(labels=percent_format()) + expand_limits(y=0) + labs(x="Position within a Metalcore Song", y="Average AFINN Sentiment Score", title="Visualizing Sentiment Across All Metalcore Songs: Top Album of the Year", subtitle="Album of the Year 2019.\nThe dotted black line is the average across all metalcore songs.") + geom_line(data=afinn, aes(decile, score), size=1.5, linetype=2, color="black") + theme_dark()
+
+
+```
+
+
+Debut Album of the Year
+```{r, echo=FALSE}
+
+decile_counts <- clean %>% group_by(Artist, Album) %>% mutate(word_position = row_number () / n()) %>% ungroup() %>% mutate(decile=ceiling(word_position * 10)/10) %>% count(decile, word, Artist) %>% filter(Artist=="Thornhill" | Artist=="Gravemind" | Artist=="Above, Below" | Artist=="Diamond Construct" | Artist=="Shrezzers")
+
+decile_counts %>% inner_join(get_sentiments("afinn"), by = "word") %>% group_by(decile, Artist) %>% summarize(score = sum(value * n) / sum(n)) %>% ggplot(aes(decile, score, col=Artist)) + geom_line(size=2) + scale_x_continuous(labels=percent_format()) + expand_limits(y=0) + labs(x="Position within a Metalcore Song", y="Average AFINN Sentiment Score", title="Visualizing Sentiment Across All Metalcore Songs: Top Debut Albums", subtitle="Top Debut Album of 2019.\nThe dotted black line is the average across all metalcore songs.") + geom_line(data=afinn, aes(decile, score), size=1.5, linetype=2, color="black") + theme_dark()
+
+
+```
+
+
+
+North American Album of the Year
+```{r, echo=FALSE}
+
+decile_counts <- clean %>% group_by(Artist, Album) %>% mutate(word_position = row_number () / n()) %>% ungroup() %>% mutate(decile=ceiling(word_position * 10)/10) %>% count(decile, word, Artist) %>% filter(Artist=="Periphery" | Artist=="Knocked Loose" | Artist=="Counterparts" | Artist=="Norma Jean" | Artist=="As I Lay Dying")
+
+decile_counts %>% inner_join(get_sentiments("afinn"), by = "word") %>% group_by(decile, Artist) %>% summarize(score = sum(value * n) / sum(n)) %>% ggplot(aes(decile, score, col=Artist)) + geom_line(size=2) + scale_x_continuous(labels=percent_format()) + expand_limits(y=0) + labs(x="Position within a Metalcore Song", y="Average AFINN Sentiment Score", title="Visualizing Sentiment Across All Metalcore Songs: North American Releases", subtitle="4 Americans, 1 Canadian.\nThe dotted black line is the average across all metalcore songs.") + geom_line(data=afinn, aes(decile, score), size=1.5, linetype=2, color="black") + theme_dark()
+
+
+```
+
+
+
+
+Top Lyrics of the Year
+```{r, echo=FALSE}
+
+decile_counts <- clean %>% group_by(Artist, Album, Song_Title) %>% mutate(word_position = row_number () / n()) %>% ungroup() %>% mutate(decile=ceiling(word_position * 10)/10) %>% count(decile, word, Song_Title) %>% filter(Song_Title=="Where We Go When We Die" | Song_Title=="Details Matter" | Song_Title=="Drunk" | Song_Title=="Imprints" | Song_Title=="...And Still I Wander South")
+
+decile_counts %>% inner_join(get_sentiments("afinn"), by = "word") %>% group_by(decile, Song_Title) %>% summarize(score = sum(value * n) / sum(n)) %>% ggplot(aes(decile, score, col=Song_Title)) + geom_line(size=2) + scale_x_continuous(labels=percent_format()) + expand_limits(y=0) + labs(x="Position within a Metalcore Song", y="Average AFINN Sentiment Score", title="Visualizing Sentiment Across All Metalcore Songs: Top Lyrics", subtitle="Top Lyrics of 2019.\nThe dotted black line is the average across all metalcore songs.") + geom_line(data=afinn, aes(decile, score), size=1.5, linetype=2, color="black") + theme_dark()
+
+
+```
+
+
+Top Ass Beating Song of the Year (Not sure why Gideon isn't here)
+```{r, echo=FALSE}
+
+decile_counts <- clean %>% group_by(Artist, Album, Song_Title) %>% mutate(word_position = row_number () / n()) %>% ungroup() %>% mutate(decile=ceiling(word_position * 10)/10) %>% count(decile, word, Song_Title) %>% filter(Song_Title=="In The Walls" | Song_Title=="Boomslang" | Song_Title=="The Thread" | Song_Title=="Crooked" | Song_Title=="No Love/No One")
+
+decile_counts %>% inner_join(get_sentiments("afinn"), by = "word") %>% group_by(decile, Song_Title) %>% summarize(score = sum(value * n) / sum(n)) %>% ggplot(aes(decile, score, col=Song_Title)) + geom_line(size=2) + scale_x_continuous(labels=percent_format()) + expand_limits(y=0) + labs(x="Position within a Metalcore Song", y="Average AFINN Sentiment Score", title="Visualizing Sentiment Across All Metalcore Songs: Ass-Beating Songs", subtitle="Let's Fucking Go.\nThe dotted black line is the average across all metalcore songs.") + geom_line(data=afinn, aes(decile, score), size=1.5, linetype=2, color="black") + theme_dark()
+
+
+```
+
+
+
+Blacklisted bands
+```{r, echo=FALSE}
+
+decile_counts <- clean %>% group_by(Artist, Album) %>% mutate(word_position = row_number () / n()) %>% ungroup() %>% mutate(decile=ceiling(word_position * 10)/10) %>% count(decile, word, Artist) %>% filter(Artist=="Wage War" | Artist=="As I Lay Dying" | Artist=="August Burns Red" | Artist=="Northlane" | Artist=="Killswitch Engage" | Artist=="Counterparts")
+
+decile_counts %>% inner_join(get_sentiments("afinn"), by = "word") %>% group_by(decile, Artist) %>% summarize(score = sum(value * n) / sum(n)) %>% ggplot(aes(decile, score, col=Artist)) + geom_line(size=2) + scale_x_continuous(labels=percent_format()) + expand_limits(y=0) + labs(x="Position within a Metalcore Song", y="Average AFINN Sentiment Score", title="Visualizing Sentiment Across All Metalcore Songs: Blacklisted Bands", subtitle="Blacklisted Metalcore Bands, with addition of Pop-Rock Feature 'Wage War' \nThe dotted black line is the average across all metalcore songs.") + geom_line(data=afinn, aes(decile, score), size=1.5, linetype=2, color="black") + theme_dark()
+
+
+```
